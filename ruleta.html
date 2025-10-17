@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Ruleta — Exportar / Imprimir</title>
+<style>
+:root{--accent:#7c3aed;--muted:#6b7280}
+body{font-family:Arial,Helvetica,sans-serif;background:linear-gradient(180deg,#f6f9ff,#fff);margin:0;color:#111;padding:18px}
+.header{display:flex;align-items:center;gap:14px}
+.logo{width:56px;height:56px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#34d399);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
+h1{margin:0;font-size:20px;color:var(--accent)}
+.lead{margin:0;color:var(--muted);font-size:13px}
+.container{display:grid;grid-template-columns:360px 1fr;gap:18px;margin-top:14px}
+.card{background:#fff;padding:14px;border-radius:12px;box-shadow:0 8px 30px rgba(2,6,23,0.05)}
+#ruleta{width:260px;height:260px;border-radius:50%;border:8px solid var(--accent);margin:10px auto;background:conic-gradient(#fca5a5 0deg 72deg,#fde68a 72deg 144deg,#86efac 144deg 216deg,#93c5fd 216deg 288deg,#d8b4fe 288deg 360deg);transition:transform 3s ease-out;position:relative}
+#needle{position:absolute;top:28px;left:50%;transform:translateX(-50%);width:6px;height:90px;background:var(--accent);border-radius:6px}
+.controls{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:8px}
+button{background:var(--accent);color:#fff;border:0;padding:8px 12px;border-radius:8px;cursor:pointer;font-weight:700}
+button.secondary{background:#fff;color:var(--accent);border:1px solid rgba(124,58,237,0.12)}
+#brigadas{margin-top:6px;display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.brigada{background:linear-gradient(180deg,#fff,#fbfbff);padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,0.04)}
+.brigada h3{margin:0 0 6px;color:var(--accent);font-size:14px}
+.brigada ul{margin:0;padding-left:14px;font-size:13px}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.print-note{font-size:12px;color:var(--muted);margin-top:8px}
+@media(max-width:920px){.container{grid-template-columns:1fr}.brigada{min-height:80px}}
+/* impresión limpia */
+@media print{
+  body{background:white}
+  .controls,.tools{display:none}
+}
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">TC</div>
+    <div>
+      <h1>Ruleta — Demo local</h1>
+      <p class="lead">L.G MILDRED MORENO .</p>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <div id="ruleta"><div id="needle"></div></div>
+
+      <div class="controls">
+        <button id="spinBtn">Girar</button>
+        <button id="autoBtn" class="secondary">Autorellenar</button>
+        <button id="resetBtn" class="secondary">Reiniciar brigadas</button>
+      </div>
+
+      <div class="tools" style="margin-top:10px">
+        <button id="printBtn" class="secondary">Imprimir / Guardar como PDF</button>
+        <button id="downloadBtn" class="secondary">Descargar imagen (.png)</button>
+      </div>
+
+      <p class="print-note">Usa "Imprimir" para generar un PDF. "Descargar imagen" crea un PNG con las 5 brigadas.</p>
+    </div>
+
+    <div class="card" id="panel">
+      <strong>Brigadas</strong>
+      <div id="brigadas"></div>
+    </div>
+  </div>
+
+<script>
+/* ===== datos ===== */
+const ALL = [
+ "AGUILAR BARRERA DAYRON RAMSES","BARRANCO GOMEZ JEREMY","CABALLERO NAJERA JUANITA JAYDENI",
+ "CRUZ ZAPOTE MARIA ANGELES","DANIEL DABOXTHA VERENISE","DURAN CRUZ MARLEN",
+ "GACHUZ VAZQUEZ FERNANDA","GARCIA HERNANDEZ BRYAN ISAAC","GARCIA PEREZ YOANA",
+ "GOMEZ VAZQUEZ FABIOLA ANAHI","GONZALEZ AZPEITIA EMIR HASSAN","GONZALEZ SEBASTIAN GALILEA",
+ "HERNANDEZ GARCIA DANNYAMARE","HERNANDEZ PEREZ JOSE DE JESUS","HERNANDEZ ROJO KEVIN GAEL",
+ "HIDALGO HERNANDEZ AIXA MIRNA","JIMENEZ ROMERO ARLETH MARILIN","MARTINEZ CORONA DAVID",
+ "MARTINEZ GUERRERO MAIRENY","MARTINEZ GUTIERREZ ERICK","MEJIA LUGO ALDO",
+ "PACHECO VAZQUEZ MAYRIN YATZEL","PEREZ PEREZ ASHLY","RAMIREZ ARTEAGA JHAMILETH",
+ "RAMIREZ GONZALEZ YAHIR","RAMOS ESPINO SANDRA PAOLA","SANTIAGO GONZALEZ KAREN GUADALUPE",
+ "TRINIDAD CHARREZ JONATHAN"
+];
+const GROUP_SIZES = [6,6,6,5,5];
+const PAIR_A = "MEJIA LUGO ALDO";
+const PAIR_B = "SANTIAGO GONZALEZ KAREN GUADALUPE";
+const STORAGE_KEY = 'ruleta_demo_reservedBrig_v2';
+
+/* estado */
+let reservedBrIndex = (() => {
+  const s = localStorage.getItem(STORAGE_KEY);
+  if(s!==null) return Number(s);
+  const r = Math.floor(Math.random()*5);
+  localStorage.setItem(STORAGE_KEY, String(r));
+  return r;
+})();
+let available = [...ALL];
+let brigadas = Array.from({length:5}, ()=>[]);
+let cur = 0;
+let picks = 0;
+let pairAssigned = {a:false,b:false};
+let spinning=false;
+
+/* util */
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
+
+/* UI render */
+function render(){
+  const cont = document.getElementById('brigadas');
+  cont.innerHTML = '';
+  brigadas.forEach((g,i)=>{
+    const d=document.createElement('div');
+    d.className='brigada';
+    d.innerHTML = `<h3>Brigada ${i+1} (${g.length}/${GROUP_SIZES[i]})</h3>
+      <ul>${g.map(n=>`<li>${n}</li>`).join('')}</ul>`;
+    cont.appendChild(d);
+  });
+}
+
+/* pick logic (garantiza pareja en reservedBrIndex) */
+function chooseName(){
+  const both = pairAssigned.a && pairAssigned.b;
+  // antes: no elegir pareja
+  if(cur < reservedBrIndex && !both){
+    const pool = available.filter(x=>x!==PAIR_A && x!==PAIR_B);
+    return pool[Math.floor(Math.random()*pool.length)];
+  }
+  // en la brigada destino: asegurar pareja (con mezcla)
+  if(cur === reservedBrIndex && !both){
+    const slotsLeft = GROUP_SIZES[cur] - brigadas[cur].length;
+    const need = (pairAssigned.a?0:1) + (pairAssigned.b?0:1);
+    if(slotsLeft === need){
+      const cand = [];
+      if(!pairAssigned.a) cand.push(PAIR_A);
+      if(!pairAssigned.b) cand.push(PAIR_B);
+      return cand[Math.floor(Math.random()*cand.length)];
+    }
+    const rem = [];
+    if(!pairAssigned.a) rem.push(PAIR_A);
+    if(!pairAssigned.b) rem.push(PAIR_B);
+    if(rem.length>0 && Math.random()<0.55) return rem[Math.floor(Math.random()*rem.length)];
+    const pool = available.filter(x=>x!==PAIR_A && x!==PAIR_B);
+    return pool.length?pool[Math.floor(Math.random()*pool.length)]:rem[Math.floor(Math.random()*rem.length)];
+  }
+  // normal
+  return available[Math.floor(Math.random()*available.length)];
+}
+
+/* asignar */
+function assign(name){
+  brigadas[cur].push(name);
+  if(name===PAIR_A) pairAssigned.a=true;
+  if(name===PAIR_B) pairAssigned.b=true;
+  available = available.filter(n=>n!==name);
+  picks++;
+  if(picks>=GROUP_SIZES[cur]) { cur++; picks=0; }
+  render();
+}
+
+/* animación y flujo */
+function spinOnce(){
+  if(spinning) return;
+  if(cur>=5){ alert('Todas las brigadas completas'); return; }
+  if(available.length===0){ alert('No hay más participantes'); return; }
+
+  spinning=true;
+  const ruleta = document.getElementById('ruleta');
+  const deg = 360*(3 + Math.floor(Math.random()*4)) + Math.random()*360;
+  ruleta.style.transform = `rotate(${deg}deg)`;
+
+  // simulación de nombres en centro (simple)
+  const sample = available.slice().sort(()=>Math.random()-0.5).slice(0,6);
+  let idx=0;
+  const center = document.getElementById('resultado');
+  if(center) center.textContent = '';
+  const interval = setInterval(()=>{ if(center) center.textContent = sample[idx%sample.length]; idx++; }, 120);
+
+  setTimeout(()=>{
+    clearInterval(interval);
+    const pick = chooseName();
+    if(center) center.textContent = pick;
+    assign(pick);
+    setTimeout(()=>{ spinning=false; ruleta.style.transform = `rotate(${deg%360}deg)`; }, 250);
+  }, 2600);
+}
+
+/* autorellenar */
+function autofill(){
+  if(cur>=5) return;
+  let need = GROUP_SIZES[cur] - brigadas[cur].length;
+  if(need<=0) return;
+  let cnt=0;
+  const step = ()=>{
+    if(cnt>=need) return;
+    spinOnce();
+    cnt++;
+    setTimeout(step, 1400 + Math.random()*700);
+  };
+  step();
+}
+
+/* reiniciar (mantiene reservedBrIndex) */
+function resetBrig(){
+  if(!confirm('Reiniciar brigadas (preserva la brigada destino guardada). ¿Continuar?')) return;
+  available = [...ALL];
+  brigadas = Array.from({length:5}, ()=>[]);
+  cur=0; picks=0; pairAssigned={a:false,b:false};
+  render();
+}
+
+/* nueva sesión (cambia brigada destino) */
+function newSession(){
+  if(!confirm('Cambiar la brigada destino persistente (nueva aleatoria). ¿Continuar?')) return;
+  const ns = Math.floor(Math.random()*5);
+  localStorage.setItem(STORAGE_KEY, String(ns));
+  location.reload();
+}
+
+/* ====== EXPORT: imprimir y descargar PNG ====== */
+
+/* Imprimir: solo llamamos window.print() (usa CSS print rules) */
+document.getElementById('printBtn').addEventListener('click', ()=> window.print());
+
+/* Descargar PNG: dibuja en canvas una representación simple de las brigadas */
+function downloadPNG(){
+  // Crear canvas con tamaño dinámico
+  const cols = 2;
+  const colWidth = 600;
+  const rowHeight = 260; // para dos brigadas por columna visual
+  const rows = Math.ceil(5/cols);
+  const padding = 40;
+  const canvasW = cols*colWidth + padding*2;
+  // calcular altura según la mayor lista
+  // aprox: título + rows * 260
+  const canvasH = padding*2 + rows * rowHeight + 120;
+
+  const c = document.createElement('canvas');
+  c.width = canvasW * 2; // retina friendly
+  c.height = canvasH * 2;
+  const ctx = c.getContext('2d');
+  ctx.scale(2,2);
+
+  // fondo
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0,0,canvasW,canvasH);
+
+  // título
+  ctx.fillStyle = '#7c3aed';
+  ctx.font = '22px Arial';
+  ctx.fillText('Ruleta — Brigadas', padding, 36);
+
+  // subtítulo con info de pareja y brigada persistente
+  ctx.fillStyle = '#333';
+  ctx.font = '13px Arial';
+  ctx.fillText(`Pareja persistente: ${PAIR_A} & ${PAIR_B} → Brigada ${reservedBrIndex+1}`, padding, 60);
+  ctx.fillText(`Generado: ${new Date().toLocaleString()}`, padding, 78);
+
+  // dibujar cada brigada
+  const boxW = colWidth - 30;
+  const boxH = 220;
+  for(let i=0;i<5;i++){
+    const col = i % cols;
+    const row = Math.floor(i/cols);
+    const x = padding + col*colWidth + 10;
+    const y = 100 + row*rowHeight;
+
+    // caja
+    ctx.fillStyle = '#f8f9ff';
+    roundRect(ctx, x, y, boxW, boxH, 10, true, false);
+    // header
+    ctx.fillStyle = '#7c3aed';
+    ctx.font = 'bold 16px Arial';
+    ctx.fillText(`Brigada ${i+1} (${brigadas[i].length}/${GROUP_SIZES[i]})`, x+12, y+28);
+    // lines
+    ctx.strokeStyle = '#e6e6f0';
+    ctx.beginPath();
+    ctx.moveTo(x+10, y+36);
+    ctx.lineTo(x+boxW-10, y+36);
+    ctx.stroke();
+
+    // members
+    ctx.fillStyle = '#111';
+    ctx.font = '13px Arial';
+    const names = brigadas[i].slice();
+    if(names.length===0) names.push('(vacío)');
+    for(let j=0;j<names.length;j++){
+      const yy = y+56 + j*20;
+      ctx.fillText(`${j+1}. ${names[j]}`, x+14, yy);
+    }
+  }
+
+  // convertir a blob y descargar
+  c.toBlob(function(blob){
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'brigadas_ruleta.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 'image/png');
+}
+
+/* helper: rounded rect */
+function roundRect(ctx,x,y,w,h,r,fill,stroke){
+  if(typeof r==='undefined') r=5;
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+  if(fill){ ctx.fill(); }
+  if(stroke){ ctx.stroke(); }
+}
+
+/* ===== eventos ===== */
+document.getElementById('spinBtn').addEventListener('click', spinOnce);
+document.getElementById('autoBtn').addEventListener('click', autofill);
+document.getElementById('resetBtn').addEventListener('click', resetBrig);
+document.getElementById('downloadBtn').addEventListener('click', downloadPNG);
+
+/* inicio */
+shuffle(available);
+render();
+
+</script>
+</body>
+</html>
